@@ -22,16 +22,16 @@ class TradeRequest(BaseModel):
 @app.post("/trade")
 async def trade(request: TradeRequest):
     try:
-        side = get_trade_side(request.action)
-        if side is None:
+        # Optional validation
+        if get_trade_side(request.action) is None:
             raise HTTPException(status_code=400, detail="Invalid trade side/action")
 
         result = await place_order(
             uid=request.uid,
             mtoken=request.mtoken,
             htoken=request.htoken,
+            action=request.action,  # ✅ pass action, not side
             symbol=request.symbol,
-            side=side,
             vol=request.vol,
             leverage=request.leverage,
             price=request.price,
