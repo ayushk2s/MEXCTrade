@@ -42,7 +42,7 @@ async def place_order(uid, mtoken, htoken, action, symbol, vol, leverage, price,
     order = await client.create_order(
         symbol=symbol.upper(),
         side=side,
-        order_type=3,  # Market order
+        order_type=1,  # Market order
         vol=vol,
         leverage=leverage,
         open_type=1,  # Isolated margin
