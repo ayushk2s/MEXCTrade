@@ -625,7 +625,7 @@ class MEXCClient:
         endpoint = f'api/v1/private/order/submit'
 
         # endpoint = f'api/v1/private/order/create'
-        data = return_data({ 'symbol': symbol, 'price': price, 'vol': vol, 'leverage': leverage, 'side': side, 'type': 5, 'openType': open_type, 'positionId': position_id, 'externalOid': external_oid, 'stopLossPrice': stop_loss_price, 'takeProfitPrice': take_profit_price, 'positionMode': position_mode, 'reduceOnly': False, 'postOnly': False })
+        data = return_data({ 'symbol': symbol, 'price': price, 'vol': vol, 'leverage': leverage, 'side': side, 'type': order_type, 'openType': open_type, 'positionId': position_id, 'externalOid': external_oid, 'stopLossPrice': stop_loss_price, 'takeProfitPrice': take_profit_price, 'positionMode': position_mode, 'reduceOnly': False, 'postOnly': False })
         return await self.make_request(endpoint, data, 'POST')
     
     # Method to create bulk order (Under maintenance)
