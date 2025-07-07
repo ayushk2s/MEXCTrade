@@ -43,3 +43,17 @@ async def trade(request: TradeRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/cancel_all_orders")
+async def cancel_all_orders(request: CancelOrdersRequest):
+    try:
+        # Initialize client
+        client = MEXCClient(request.uid, request.mtoken, request.htoken, testnet=request.testnet)
+
+        # Call the method to cancel all orders
+        result = await client.cancel_all_orders(symbol=request.symbol)
+        return {"status": "success", "result": result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
