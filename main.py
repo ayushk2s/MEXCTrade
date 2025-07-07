@@ -1,9 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import asyncio
-from init import MEXCClient  # from your existing file
 from trading import get_trade_side, place_order, cancel_all_orders
-
 
 app = FastAPI()
 
@@ -20,10 +17,17 @@ class TradeRequest(BaseModel):
     stop_loss: float | None = None
     testnet: bool = True
 
+# ✅ Add this class
+class CancelOrdersRequest(BaseModel):
+    uid: str
+    mtoken: str
+    htoken: str
+    symbol: str | None = None
+    testnet: bool = True
+
 @app.post("/trade")
 async def trade(request: TradeRequest):
     try:
-        # Optional validation
         if get_trade_side(request.action) is None:
             raise HTTPException(status_code=400, detail="Invalid trade side/action")
 
@@ -31,7 +35,7 @@ async def trade(request: TradeRequest):
             uid=request.uid,
             mtoken=request.mtoken,
             htoken=request.htoken,
-            action=request.action,  # ✅ pass action, not side
+            action=request.action,
             symbol=request.symbol,
             vol=request.vol,
             leverage=request.leverage,
@@ -59,5 +63,3 @@ async def cancel_all_orders_route(request: CancelOrdersRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
