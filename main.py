@@ -11,7 +11,7 @@ class TradeRequest(BaseModel):
     mtoken: str
     htoken: str
     symbol: str
-    action: str
+    side: str
     vol: float
     leverage: int
     price: float
@@ -37,7 +37,7 @@ async def trade(request: TradeRequest):
             mtoken=request.mtoken,
             htoken=request.htoken,
             symbol=request.symbol,
-            action=request.action,
+            side=request.side,
             vol=request.vol,
             leverage=request.leverage,
             price=request.price,
