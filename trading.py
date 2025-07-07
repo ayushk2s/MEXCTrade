@@ -58,13 +58,3 @@ async def place_order(uid, mtoken, htoken, action, symbol, vol, leverage, price,
     print("Order result:", order)
     print(f"Execution time: {time.time() - start_time:.2f} seconds")
     return order
-
-async def cancel_all_orders(uid, mtoken, htoken, symbol=None, testnet=True):
-    """
-    Cancels all open orders on a given symbol (or all symbols if none given).
-    """
-    client = MEXCClient(uid, mtoken, htoken, testnet=testnet)
-    print(f"Cancelling all orders for symbol: {symbol}")
-    result = await client.cancel_all_orders(symbol=symbol)
-    print("Cancel result:", result)
-    return result
