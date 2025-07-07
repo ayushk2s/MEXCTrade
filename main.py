@@ -1,17 +1,16 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import asyncio
-from init import MEXCClient
-from trading import get_trade_side, place_order, cancel_all_order  # Include cancel_all_order
+from trading import get_trade_side, place_order, cancel_all_order  # Your core functions
 
 app = FastAPI()
 
+# ──────── Request Models ────────
 class TradeRequest(BaseModel):
     uid: str
     mtoken: str
     htoken: str
     symbol: str
-    side: str
+    action: str     # ✅ should be 'buy', 'sell', 'broughtsell', or 'soldbuy'
     vol: float
     leverage: int
     price: float
@@ -25,19 +24,22 @@ class CancelRequest(BaseModel):
     htoken: str
     testnet: bool = True
 
+# ──────── Trade Endpoint ────────
 @app.post("/trade")
 async def trade(request: TradeRequest):
     try:
+        # Validate the action
         side = get_trade_side(request.action)
         if side is None:
-            raise HTTPException(status_code=400, detail="Invalid trade side/action")
+            raise HTTPException(status_code=400, detail="Invalid trade action. Must be 'buy', 'sell', 'broughtsell', or 'soldbuy'.")
 
+        # Call the actual order placement function
         result = await place_order(
             uid=request.uid,
             mtoken=request.mtoken,
             htoken=request.htoken,
+            action=request.action,  # ✅ pass action, not side
             symbol=request.symbol,
-            side=request.side,
             vol=request.vol,
             leverage=request.leverage,
             price=request.price,
@@ -51,6 +53,7 @@ async def trade(request: TradeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ──────── Cancel All Orders Endpoint ────────
 @app.post("/cancel")
 async def cancel_all(request: CancelRequest):
     try:
@@ -61,6 +64,5 @@ async def cancel_all(request: CancelRequest):
             testnet=request.testnet
         )
         return {"status": "success", "result": result}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
