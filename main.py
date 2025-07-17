@@ -43,7 +43,7 @@ async def trade(request: TradeRequest):
             mtoken=request.mtoken,
             htoken=request.htoken,
             symbol=request.symbol,
-            side=side,
+            action=side,
             order_type=request.order_type,
             vol=request.vol,
             leverage=request.leverage,
