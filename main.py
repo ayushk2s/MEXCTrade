@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import asyncio
 from init import MEXCClient  # your custom MEXC client
-from trading import get_trade_side, place_order, cancel_all_orders  # Ensure cancel function is imported
+from trading import get_trade_side, place_order, cancel_all_order  # Ensure cancel function is imported
 
 app = FastAPI()
 
@@ -62,7 +62,7 @@ async def trade(request: TradeRequest):
 @app.post("/cancel")
 async def cancel_all(request: CancelRequest):
     try:
-        result = await cancel_all_orders(
+        result = await cancel_all_order(
             uid=request.uid,
             mtoken=request.mtoken,
             htoken=request.htoken,
