@@ -26,7 +26,7 @@ class CancelRequest(BaseModel):
     uid: str
     mtoken: str
     htoken: str
-    symbol: str
+    # symbol: str
     testnet: bool = True
 
 # ──────── Trade Endpoint ────────
@@ -66,7 +66,7 @@ async def cancel_all(request: CancelRequest):
             uid=request.uid,
             mtoken=request.mtoken,
             htoken=request.htoken,
-            symbol=request.symbol,
+            # symbol=request.symbol,
             testnet=request.testnet
         )
         return {"status": "success", "result": result}
