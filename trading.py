@@ -23,7 +23,7 @@ def get_trade_side(action):
         return 2
     return None
 
-async def place_order(uid, mtoken, htoken, action, symbol, vol, leverage, price, take_profit=None, stop_loss=None, testnet=True):
+async def place_order(uid, mtoken, htoken, action, symbol, order_type, vol, leverage, price, take_profit=None, stop_loss=None, testnet=True):
     """
     Places a futures order using MEXCClient.
     """
@@ -41,7 +41,7 @@ async def place_order(uid, mtoken, htoken, action, symbol, vol, leverage, price,
     order = await client.create_order(
         symbol=symbol.upper(),
         side=side,
-        order_type=2,
+        order_type=order_type,   #'1' (Limit), '5' (Market), '6' (Market-to-Limit), '2' (Post Order)
         vol=vol,
         leverage=leverage,
         open_type=1,
