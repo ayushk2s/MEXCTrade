@@ -1,10 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import asyncio
-from init import MEXCClient  # from your existing file
-from trading import get_trade_side, place_order  # see below
+from init import MEXCClient  # your custom MEXC client
+from trading import get_trade_side, place_order, cancel_all_orders  # Ensure cancel function is imported
 
 app = FastAPI()
+
+# ──────── Request Models ────────
 
 class TradeRequest(BaseModel):
     uid: str
@@ -19,6 +21,15 @@ class TradeRequest(BaseModel):
     take_profit: float | None = None
     stop_loss: float | None = None
     testnet: bool = True
+
+class CancelRequest(BaseModel):
+    uid: str
+    mtoken: str
+    htoken: str
+    symbol: str
+    testnet: bool = True
+
+# ──────── Trade Endpoint ────────
 
 @app.post("/trade")
 async def trade(request: TradeRequest):
@@ -39,6 +50,23 @@ async def trade(request: TradeRequest):
             price=request.price,
             take_profit=request.take_profit,
             stop_loss=request.stop_loss,
+            testnet=request.testnet
+        )
+        return {"status": "success", "result": result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ──────── Cancel All Orders Endpoint ────────
+
+@app.post("/cancel")
+async def cancel_all(request: CancelRequest):
+    try:
+        result = await cancel_all_orders(
+            uid=request.uid,
+            mtoken=request.mtoken,
+            htoken=request.htoken,
+            symbol=request.symbol,
             testnet=request.testnet
         )
         return {"status": "success", "result": result}
