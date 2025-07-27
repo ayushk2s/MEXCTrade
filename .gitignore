@@ -1,0 +1,43 @@
+# General Python files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# Build and distribution files
+build/
+dist/
+*.egg-info/
+*.egg
+
+# IDE and editor files
+.idea/
+*.sublime-workspace
+*.sublime-project
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Python packaging
+MANIFEST
+
+# Pytest cache
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# MacOS
+*.DS_Store
