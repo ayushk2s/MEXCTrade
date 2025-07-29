@@ -1,6 +1,31 @@
-fastapi
-uvicorn
-pydantic
-httpx
-requests
-pycryptodome
+# Core FastAPI dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+
+# HTTP client optimizations
+httpx==0.25.2
+aiofiles==23.2.1
+
+# JSON performance optimization (fallback to ujson for Windows compatibility)
+ujson==5.8.0
+
+# Caching layer
+redis==5.0.1
+aioredis==2.0.1
+
+# Crypto dependencies
+pycryptodome==3.19.0
+
+# Performance monitoring
+prometheus-client==0.19.0
+
+# Compression
+brotli==1.1.0
+
+# Event loop optimization (Linux/Mac only - Windows will ignore)
+uvloop==0.19.0; sys_platform != "win32"
+
+# Development and testing
+pytest==7.4.3
+pytest-asyncio==0.21.1

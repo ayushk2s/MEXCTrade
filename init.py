@@ -1,120 +1,227 @@
-# init.py
+# init.py - Optimized MEXC Client with async HTTP and connection pooling
 
 import random
-import requests # type: ignore
+import asyncio
+import time
 from typing import Optional, Dict, Any, List, Union
-from func import get_data, random_params, return_data, normalize_proxies
+import httpx
+try:
+    import orjson as json_lib
+    JSON_LOADS = json_lib.loads
+    JSON_DUMPS = json_lib.dumps
+except ImportError:
+    import ujson as json_lib
+    JSON_LOADS = json_lib.loads
+    JSON_DUMPS = lambda x: json_lib.dumps(x).encode() if isinstance(x, dict) else json_lib.dumps(x)
+from func import get_data_async, random_params, return_data, normalize_proxies
+from functools import lru_cache
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 # from constants import constants as const
 # Examples:
 # const.OPEN_LONG
 # const.ISOLATED
 # const.PRICE_LIMITED_ORDER
 
+# Global HTTP client with connection pooling
+_http_client: Optional[httpx.AsyncClient] = None
+_client_lock = asyncio.Lock()
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Get or create a shared HTTP client with optimized settings"""
+    global _http_client
+
+    if _http_client is None:
+        async with _client_lock:
+            if _http_client is None:
+                # Optimized HTTP client settings for high performance
+                limits = httpx.Limits(
+                    max_keepalive_connections=20,
+                    max_connections=100,
+                    keepalive_expiry=30.0
+                )
+
+                timeout = httpx.Timeout(
+                    connect=5.0,
+                    read=10.0,
+                    write=5.0,
+                    pool=10.0
+                )
+
+                _http_client = httpx.AsyncClient(
+                    limits=limits,
+                    timeout=timeout,
+                    http2=True,  # Enable HTTP/2 for better performance
+                    follow_redirects=True
+                )
+
+    return _http_client
+
+async def close_http_client():
+    """Close the shared HTTP client"""
+    global _http_client
+    if _http_client:
+        await _http_client.aclose()
+        _http_client = None
+
 class MEXCClient:
     def __init__(self, auth: str, mtoken: str, mhash: str, testnet: bool = False, proxy: Union[List[Union[str, dict]], str, None] = None):
         self.auth = auth
         self.mtoken = mtoken
         self.mhash = mhash
-        
+
         # Initialize proxy list
         if proxy:
             self.proxy_list = proxy if isinstance(proxy, list) else [proxy]
         else:
             self.proxy_list = []  # Empty list if no proxies are provided
-        
+
+        # Cache language selection for better performance
         self.language = random_params('languages', self)
         self.base_url = "https://futures.mexc.com" if testnet else 'https://futures.mexc.com'
         
-        self.info = {
-            "mtoken": self.mtoken,
-            "mhash": self.mhash,
-            **random_params('systems', self),
-            **random_params('browsers', self),
-            "language": self.language["language"],
-            "kernel_name": "Blink",
-            "kernel_ver": "",
-            "display_resolution": "36",
-            "color_depth": "24",
-            "total_memory": "8",
-            "pixel_ratio": 1.25,
-            "time_zone": random_params('time_zones', self),
-            "session_enable": "true",
-            "storage_enable": "true",
-            "indexeddb_enable": "true",
-            "websql_enable": "false",
-            "fonts": random_params('fonts', self),
-            "audio_hash": "",
-            "webgl_hash": "",
-            "member_id": "",
-            "env_info": "",
-            "hostname": self.base_url,
-            "sdk_v": "0.0.10",
-            "product_type": 0,
-            "platform_type": 3
-        }
+        # Cache system info for better performance
+        self._cached_system_info = None
+        self._info_cache_time = 0
+        self._info_cache_ttl = 300  # 5 minutes cache
 
-    
+    @property
+    def info(self) -> Dict[str, Any]:
+        """Get cached system info or generate new one"""
+        current_time = time.time()
+
+        if (self._cached_system_info is None or
+            current_time - self._info_cache_time > self._info_cache_ttl):
+
+            self._cached_system_info = {
+                "mtoken": self.mtoken,
+                "mhash": self.mhash,
+                **random_params('systems', self),
+                **random_params('browsers', self),
+                "language": self.language["language"],
+                "kernel_name": "Blink",
+                "kernel_ver": "",
+                "display_resolution": "36",
+                "color_depth": "24",
+                "total_memory": "8",
+                "pixel_ratio": 1.25,
+                "time_zone": random_params('time_zones', self),
+                "session_enable": "true",
+                "storage_enable": "true",
+                "indexeddb_enable": "true",
+                "websql_enable": "false",
+                "fonts": random_params('fonts', self),
+                "audio_hash": "",
+                "webgl_hash": "",
+                "member_id": "",
+                "env_info": "",
+                "hostname": self.base_url,
+                "sdk_v": "0.0.10",
+                "product_type": 0,
+                "platform_type": 3
+            }
+            self._info_cache_time = current_time
+
+        return self._cached_system_info
+
+
     async def make_request(self, endpoint: str, data: Optional[dict], method: str) -> Dict[str, Any]:
-     """
-     Generate and send a signed HTTP request to the MEXC API.
-     """
-     data, sign, ts = get_data(self.info, data, self.auth)
-    
-     # If no proxy list is provided, just skip the proxy logic
-     proxies = None
-     if self.proxy_list:
-         proxy = random.choice(self.proxy_list)  # Pick a random proxy from the list
-         proxy_url = f"{proxy['protocol']}://{proxy['host']}:{proxy['port']}"
-         if 'username' in proxy and 'password' in proxy:
-             proxy_url = f"{proxy['protocol']}://{proxy['username']}:{proxy['password']}@{proxy['host']}:{proxy['port']}"
-         proxies = {"http": proxy_url, "https": proxy_url}
-     
-     headers = {
-         'User-Agent': random_params('user_agents', self),
-         'Accept': '*/*',
-         'Accept-Language': f'{self.language["language"]},{self.language["language"].split("-")[0]};q=0.5',
-         'Accept-Encoding': 'gzip, deflate, br',
-         'Content-Type': 'application/json',
-         'Language': self.language["full_language"],
-         'x-mxc-sign': sign,
-         'x-mxc-nonce': ts,
-         'Authorization': self.auth,
-         'Pragma': 'akamai-x-cache-on',
-         'Origin': self.base_url,
-         'Connection': 'keep-alive',
-         'Sec-Fetch-Dest': 'empty',
-         'Sec-Fetch-Mode': 'cors',
-         'Sec-Fetch-Site': 'same-origin',
-         'TE': 'trailers',
-     }
-     
-     headers = {k: str(v) for k, v in headers.items()}
-     headers = {k: v.encode('ascii', 'ignore').decode('ascii') for k, v in headers.items()}
-     
-     try:
-         if method.upper() == 'GET':
-             response = requests.request(
-                 method=method.upper(),
-                 url=self.base_url + "/" + endpoint,
-                 headers=headers,
-                 params=data,
-                 proxies=proxies
-             )
-         else:
-             response = requests.request(
-                 method=method.upper(),
-                 url=self.base_url + "/" + endpoint,
-                 headers=headers,
-                 json=data,
-                  proxies=proxies
-            )
- 
-         response.raise_for_status()
-         return response.json()
-     except requests.exceptions.RequestException as e:
-          if e.response:
-             raise Exception(f"API Error: {e.response.status_code} - {e.response.text}")
-          raise Exception(f"Network Error: {str(e)}")
+        """
+        Generate and send a signed HTTP request to the MEXC API using optimized async client.
+        """
+        start_time = time.time()
+
+        # Use optimized async data generation
+        request_data, sign, ts = await get_data_async(
+            {'mtoken': self.mtoken, 'mhash': self.mhash},
+            self.info,
+            self.auth
+        )
+
+        # Merge with provided data
+        if data:
+            request_data.update(data)
+
+        # Get optimized HTTP client
+        client = await get_http_client()
+
+        # Prepare proxy configuration
+        proxy_url = None
+        if self.proxy_list:
+            proxy = random.choice(self.proxy_list)
+            proxy_url = f"{proxy['protocol']}://{proxy['host']}:{proxy['port']}"
+            if 'username' in proxy and 'password' in proxy:
+                proxy_url = f"{proxy['protocol']}://{proxy['username']}:{proxy['password']}@{proxy['host']}:{proxy['port']}"
+
+        # Optimized headers with caching
+        headers = self._get_cached_headers(sign, ts)
+
+        url = f"{self.base_url}/{endpoint}"
+
+        try:
+            # Use httpx for true async HTTP with connection pooling
+            if method.upper() == 'GET':
+                response = await client.get(
+                    url,
+                    headers=headers,
+                    params=request_data,
+                    proxy=proxy_url
+                )
+            else:
+                # Use optimized JSON serialization
+                response = await client.request(
+                    method.upper(),
+                    url,
+                    headers=headers,
+                    json=request_data,
+                    proxy=proxy_url
+                )
+
+            response.raise_for_status()
+
+            # Use optimized JSON parsing
+            result = JSON_LOADS(response.content)
+
+            # Log performance metrics
+            elapsed = time.time() - start_time
+            logger.info(f"API call to {endpoint} completed in {elapsed:.3f}s")
+
+            return result
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error {e.response.status_code} for {endpoint}: {e.response.text}")
+            raise Exception(f"API Error: {e.response.status_code} - {e.response.text}")
+        except httpx.RequestError as e:
+            logger.error(f"Network error for {endpoint}: {str(e)}")
+            raise Exception(f"Network Error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error for {endpoint}: {str(e)}")
+            raise
+
+    @lru_cache(maxsize=100)
+    def _get_cached_headers(self, sign: str, ts: str) -> Dict[str, str]:
+        """Cache headers for better performance"""
+        return {
+            'User-Agent': random_params('user_agents', self),
+            'Accept': '*/*',
+            'Accept-Language': f'{self.language["language"]},{self.language["language"].split("-")[0]};q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Content-Type': 'application/json',
+            'Language': self.language["full_language"],
+            'x-mxc-sign': sign,
+            'x-mxc-nonce': ts,
+            'Authorization': self.auth,
+            'Pragma': 'akamai-x-cache-on',
+            'Origin': self.base_url,
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'TE': 'trailers',
+        }
 
       # Method to get the server time
    
