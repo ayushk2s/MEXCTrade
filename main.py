@@ -1,3 +1,4 @@
+# main.py - Fixed Unicode handling
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,18 +10,40 @@ from contextlib import asynccontextmanager
 from init import MEXCClient, close_http_client
 from trading import get_trade_side, place_order, cancel_all_order
 from cache import init_cache, close_cache, get_cache_stats, clear_cache
+import sys
+import locale
+
 try:
     import orjson as json_lib
 except ImportError:
     import ujson as json_lib
 from typing import Dict, Any
 
-# Configure logging
+# Set UTF-8 encoding
+if sys.platform.startswith('win'):
+    # Windows specific encoding fix
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+
+# Configure logging with UTF-8 support
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
 )
 logger = logging.getLogger(__name__)
+
+# Set locale to handle Unicode properly
+try:
+    locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
+except locale.Error:
+    try:
+        locale.setlocale(locale.LC_ALL, 'C.UTF-8')
+    except locale.Error:
+        pass  # Use default locale
 
 # Performance metrics
 request_count = 0
@@ -79,7 +102,11 @@ async def performance_middleware(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     response.headers["X-Request-Count"] = str(request_count)
 
-    logger.info(f"{request.method} {request.url.path} - {process_time:.3f}s")
+    # Safe logging with Unicode handling
+    try:
+        logger.info(f"{request.method} {request.url.path} - {process_time:.3f}s")
+    except UnicodeEncodeError:
+        logger.info(f"{request.method} [URL_WITH_UNICODE] - {process_time:.3f}s")
 
     return response
 
@@ -103,7 +130,6 @@ class CancelRequest(BaseModel):
     uid: str
     mtoken: str
     htoken: str
-    # symbol: str
     testnet: bool = True
 
 # ──────── Trade Endpoint ────────
@@ -124,7 +150,11 @@ async def trade(request: TradeRequest):
                 detail=f"Invalid trade side/action: {request.action}. Use 'buy', 'sell', 'broughtsell', or 'soldbuy'"
             )
 
-        logger.info(f"Processing {request.action.upper()} order for {request.symbol}")
+        # Safe logging with Unicode handling
+        try:
+            logger.info(f"Processing {request.action.upper()} order for {request.symbol}")
+        except UnicodeEncodeError:
+            logger.info(f"Processing {request.action.upper()} order for [SYMBOL_WITH_UNICODE]")
 
         # Execute the trade with optimized client
         result = await place_order(
@@ -156,11 +186,18 @@ async def trade(request: TradeRequest):
         raise
     except Exception as e:
         execution_time = time.time() - start_time
-        logger.error(f"Trade failed after {execution_time:.3f}s: {str(e)}")
+        
+        # Safe error logging with Unicode handling
+        error_msg = str(e)
+        try:
+            logger.error(f"Trade failed after {execution_time:.3f}s: {error_msg}")
+        except UnicodeEncodeError:
+            logger.error(f"Trade failed after {execution_time:.3f}s: [ERROR_WITH_UNICODE]")
+            
         raise HTTPException(
             status_code=500,
             detail={
-                "error": str(e),
+                "error": error_msg,
                 "execution_time": execution_time,
                 "timestamp": time.time()
             }
@@ -197,11 +234,18 @@ async def cancel_all(request: CancelRequest):
 
     except Exception as e:
         execution_time = time.time() - start_time
-        logger.error(f"Cancel all orders failed after {execution_time:.3f}s: {str(e)}")
+        
+        # Safe error logging with Unicode handling
+        error_msg = str(e)
+        try:
+            logger.error(f"Cancel all orders failed after {execution_time:.3f}s: {error_msg}")
+        except UnicodeEncodeError:
+            logger.error(f"Cancel all orders failed after {execution_time:.3f}s: [ERROR_WITH_UNICODE]")
+            
         raise HTTPException(
             status_code=500,
             detail={
-                "error": str(e),
+                "error": error_msg,
                 "execution_time": execution_time,
                 "timestamp": time.time()
             }
@@ -246,4 +290,3 @@ async def clear_api_cache(pattern: str = "*"):
         "pattern": pattern,
         "timestamp": time.time()
     }
-

@@ -1,4 +1,4 @@
-# init.py - Optimized MEXC Client with async HTTP and connection pooling
+# init.py - Fixed MEXC Client with correct proxy handling
 
 import random
 import asyncio
@@ -8,11 +8,16 @@ import httpx
 try:
     import orjson as json_lib
     JSON_LOADS = json_lib.loads
-    JSON_DUMPS = json_lib.dumps
+    JSON_DUMPS = lambda x: json_lib.dumps(x).decode('utf-8') if hasattr(json_lib.dumps(x), 'decode') else json_lib.dumps(x)
 except ImportError:
-    import ujson as json_lib
-    JSON_LOADS = json_lib.loads
-    JSON_DUMPS = lambda x: json_lib.dumps(x).encode() if isinstance(x, dict) else json_lib.dumps(x)
+    try:
+        import ujson as json_lib
+        JSON_LOADS = json_lib.loads
+        JSON_DUMPS = lambda x: json_lib.dumps(x, ensure_ascii=False)
+    except ImportError:
+        import json as json_lib
+        JSON_LOADS = json_lib.loads
+        JSON_DUMPS = lambda x: json_lib.dumps(x, ensure_ascii=False)
 from func import get_data_async, random_params, return_data, normalize_proxies
 from functools import lru_cache
 import logging
@@ -20,23 +25,21 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# from constants import constants as const
-# Examples:
-# const.OPEN_LONG
-# const.ISOLATED
-# const.PRICE_LIMITED_ORDER
 
-# Global HTTP client with connection pooling
-_http_client: Optional[httpx.AsyncClient] = None
+# Global HTTP clients with connection pooling (separate for each proxy)
+_http_clients: Dict[str, httpx.AsyncClient] = {}
 _client_lock = asyncio.Lock()
 
-async def get_http_client() -> httpx.AsyncClient:
+async def get_http_client(proxy_url: Optional[str] = None) -> httpx.AsyncClient:
     """Get or create a shared HTTP client with optimized settings"""
-    global _http_client
+    global _http_clients
+    
+    # Use a key to identify the client (proxy_url or 'default')
+    client_key = proxy_url or 'default'
 
-    if _http_client is None:
+    if client_key not in _http_clients:
         async with _client_lock:
-            if _http_client is None:
+            if client_key not in _http_clients:
                 # Optimized HTTP client settings for high performance
                 limits = httpx.Limits(
                     max_keepalive_connections=20,
@@ -51,21 +54,31 @@ async def get_http_client() -> httpx.AsyncClient:
                     pool=10.0
                 )
 
-                _http_client = httpx.AsyncClient(
-                    limits=limits,
-                    timeout=timeout,
-                    http2=True,  # Enable HTTP/2 for better performance
-                    follow_redirects=True
-                )
+                # Create client with or without proxy
+                if proxy_url:
+                    _http_clients[client_key] = httpx.AsyncClient(
+                        limits=limits,
+                        timeout=timeout,
+                        http2=True,  # Enable HTTP/2 for better performance
+                        follow_redirects=True,
+                        proxies=proxy_url  # Set proxy at client creation
+                    )
+                else:
+                    _http_clients[client_key] = httpx.AsyncClient(
+                        limits=limits,
+                        timeout=timeout,
+                        http2=True,  # Enable HTTP/2 for better performance
+                        follow_redirects=True
+                    )
 
-    return _http_client
+    return _http_clients[client_key]
 
 async def close_http_client():
-    """Close the shared HTTP client"""
-    global _http_client
-    if _http_client:
-        await _http_client.aclose()
-        _http_client = None
+    """Close all shared HTTP clients"""
+    global _http_clients
+    for client in _http_clients.values():
+        await client.aclose()
+    _http_clients.clear()
 
 class MEXCClient:
     def __init__(self, auth: str, mtoken: str, mhash: str, testnet: bool = False, proxy: Union[List[Union[str, dict]], str, None] = None):
@@ -127,6 +140,36 @@ class MEXCClient:
 
         return self._cached_system_info
 
+    def _ensure_utf8_dict(self, data):
+        """Ensure all string values in dictionary are UTF-8 safe"""
+        if isinstance(data, dict):
+            return {k: self._ensure_utf8_dict(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._ensure_utf8_dict(item) for item in data]
+        elif isinstance(data, str):
+            try:
+                # Try to encode/decode to ensure it's UTF-8 safe
+                return data.encode('utf-8', 'ignore').decode('utf-8')
+            except:
+                return data
+        else:
+            return data
+
+    def _prepare_proxy_url(self) -> Optional[str]:
+        """Prepare proxy URL from proxy list"""
+        if not self.proxy_list:
+            return None
+            
+        proxy = random.choice(self.proxy_list)
+        
+        if isinstance(proxy, dict):
+            proxy_url = f"{proxy['protocol']}://{proxy['host']}:{proxy['port']}"
+            if 'username' in proxy and 'password' in proxy:
+                proxy_url = f"{proxy['protocol']}://{proxy['username']}:{proxy['password']}@{proxy['host']}:{proxy['port']}"
+            return proxy_url
+        else:
+            # Assume it's a string URL
+            return proxy
 
     async def make_request(self, endpoint: str, data: Optional[dict], method: str) -> Dict[str, Any]:
         """
@@ -134,50 +177,49 @@ class MEXCClient:
         """
         start_time = time.time()
 
-        # Use optimized async data generation
-        request_data, sign, ts = await get_data_async(
-            {'mtoken': self.mtoken, 'mhash': self.mhash},
-            self.info,
-            self.auth
-        )
-
-        # Merge with provided data
-        if data:
-            request_data.update(data)
-
-        # Get optimized HTTP client
-        client = await get_http_client()
-
-        # Prepare proxy configuration
-        proxy_url = None
-        if self.proxy_list:
-            proxy = random.choice(self.proxy_list)
-            proxy_url = f"{proxy['protocol']}://{proxy['host']}:{proxy['port']}"
-            if 'username' in proxy and 'password' in proxy:
-                proxy_url = f"{proxy['protocol']}://{proxy['username']}:{proxy['password']}@{proxy['host']}:{proxy['port']}"
-
-        # Optimized headers with caching
-        headers = self._get_cached_headers(sign, ts)
-
-        url = f"{self.base_url}/{endpoint}"
-
         try:
+            # Use optimized async data generation
+            request_data, sign, ts = await get_data_async(
+                {'mtoken': self.mtoken, 'mhash': self.mhash},
+                self.info,
+                self.auth
+            )
+
+            # Merge with provided data
+            if data:
+                request_data.update(data)
+
+            # Prepare proxy configuration
+            proxy_url = self._prepare_proxy_url()
+
+            # Get optimized HTTP client (with or without proxy)
+            client = await get_http_client(proxy_url)
+
+            # Optimized headers with caching
+            headers = self._get_cached_headers(sign, ts)
+
+            url = f"{self.base_url}/{endpoint}"
+
             # Use httpx for true async HTTP with connection pooling
+            # Note: proxy is already set at client level, don't pass it to request
             if method.upper() == 'GET':
                 response = await client.get(
                     url,
                     headers=headers,
-                    params=request_data,
-                    proxy=proxy_url
+                    params=request_data
                 )
             else:
-                # Use optimized JSON serialization
+                # Use optimized JSON serialization with UTF-8 encoding
+                json_data = request_data
+                if json_data:
+                    # Ensure all string values are properly encoded
+                    json_data = self._ensure_utf8_dict(json_data)
+                
                 response = await client.request(
                     method.upper(),
                     url,
                     headers=headers,
-                    json=request_data,
-                    proxy=proxy_url
+                    json=json_data
                 )
 
             response.raise_for_status()
@@ -203,14 +245,34 @@ class MEXCClient:
 
     @lru_cache(maxsize=100)
     def _get_cached_headers(self, sign: str, ts: str) -> Dict[str, str]:
-        """Cache headers for better performance"""
+        """Cache headers for better performance with Unicode support"""
+        try:
+            user_agent = random_params('user_agents', self)
+            # Ensure user agent is ASCII-safe
+            if isinstance(user_agent, str):
+                user_agent = user_agent.encode('ascii', 'ignore').decode('ascii')
+        except:
+            user_agent = 'Mozilla/5.0 (compatible; MEXC-Client/1.0)'
+            
+        try:
+            language = self.language["language"]
+            full_language = self.language["full_language"]
+            # Ensure languages are ASCII-safe
+            if isinstance(language, str):
+                language = language.encode('ascii', 'ignore').decode('ascii')
+            if isinstance(full_language, str):
+                full_language = full_language.encode('ascii', 'ignore').decode('ascii')
+        except:
+            language = 'en-US'
+            full_language = 'en-US'
+            
         return {
-            'User-Agent': random_params('user_agents', self),
+            'User-Agent': user_agent,
             'Accept': '*/*',
-            'Accept-Language': f'{self.language["language"]},{self.language["language"].split("-")[0]};q=0.5',
+            'Accept-Language': f'{language},{language.split("-")[0]};q=0.5',
             'Accept-Encoding': 'gzip, deflate, br, zstd',
             'Content-Type': 'application/json',
-            'Language': self.language["full_language"],
+            'Language': full_language,
             'x-mxc-sign': sign,
             'x-mxc-nonce': ts,
             'Authorization': self.auth,
@@ -223,8 +285,7 @@ class MEXCClient:
             'TE': 'trailers',
         }
 
-      # Method to get the server time
-   
+    # Method to get the server time
     async def get_server_ping(self) -> Dict:
         """
         Fetch the list of open positions.
@@ -256,7 +317,7 @@ class MEXCClient:
         data = return_data()
         return await self.make_request(endpoint, data, 'GET')
     
-    # Method to get the contract‘s depth information
+    # Method to get the contract's depth information
     async def get_contract_depth(self, symbol: str, limit: int = None) -> Dict:
         """
         Fetch the contract's depth information.
@@ -450,15 +511,15 @@ class MEXCClient:
         data = return_data({ 'currency': currency, 'state': state, 'type': get_type, 'page_num': page_num, 'page_size': page_size })
         return await self.make_request(endpoint, data, 'GET')
 
-    # Method to get the user’s history position information
+    # Method to get the user's history position information
     async def get_history_info(self, symbol: str = None, get_type: str = None, page_num: int = 1, page_size: int = 20) -> Dict:
         """
-        Fetch the user’s history position information.
+        Fetch the user's history position information.
         - symbol: The trading pair (e.g., BTC_USDT).
         - get_type: The type of the position (e.g., 1 for long, 2 for short).
         - page_num: The page number (default 1).
         - page_size: The page size (default is 20, maximum is 100).
-        - return the user’s history position information from the API.
+        - return the user's history position information from the API.
         """
         endpoint = f'api/v1/private/position/history_positions'
         data = return_data({ 'symbol': symbol, 'type': get_type, 'page_num': page_num, 'page_size': page_size })
@@ -467,23 +528,23 @@ class MEXCClient:
     # Method to get the user's current holding position
     async def get_position_info(self, symbol: str = None) -> Dict:
         """
-        Fetch the user’s history position information.
+        Fetch the user's history position information.
         - symbol: The trading pair (e.g., BTC_USDT).
-        - return the user’s history position information from the API.
+        - return the user's history position information from the API.
         """
         endpoint = f'api/v1/private/position/open_positions'
         data = return_data({ 'symbol': symbol })
         return await self.make_request(endpoint, data, 'GET')
 
-    # Method to get details of user‘s funding rate
+    # Method to get details of user's funding rate
     async def get_funding_rate(self, symbol: str = None, position_id: int = None, page_num: int = 1, page_size: int = 20) -> Dict:
         """
-        Fetch details of user‘s funding rate.
+        Fetch details of user's funding rate.
         - symbol: The trading pair (e.g., BTC_USDT).
         - position_id: The position ID.
         - page_num: The page number (default 1).
         - page_size: The page size (default is 20, maximum is 100).
-        - return details of user‘s funding rate from the API.
+        - return details of user's funding rate from the API.
         """
         endpoint = f'api/v1/private/position/funding_records'
         data = return_data({ 'symbol': symbol, 'position_id': position_id, 'page_num': page_num, 'page_size': page_size })
@@ -565,16 +626,16 @@ class MEXCClient:
         data = return_data()
         return await self.make_request(endpoint, data, 'GET')
     
-    # Method to get all transaction details of the user’s order
+    # Method to get all transaction details of the user's order
     async def get_all_order_transaction_details(self, symbol: str, start_time: int = None, end_time: int = None, page_num: int = 1, page_size: int = 20) -> Dict:
         """
-        Get all transaction details of the user’s order.
+        Get all transaction details of the user's order.
         - symbol: The trading pair (e.g., BTC_USDT).
         - start_time: The start time of the order (e.g., 1609459200000).
         - end_time: The end time of the order (e.g., 1609459200000).
         - page_num: The page number (default 1).
         - page_size: The page size (default is 20, maximum is 100).
-        - return all transaction details of the user’s order from
+        - return all transaction details of the user's order from
         """
         endpoint = f'api/v1/private/order/list/order_deals'
         data = return_data({ 'symbol': symbol, 'start_time': start_time, 'end_time': end_time, 'page_num': page_num, 'page_size': page_size })
@@ -593,7 +654,7 @@ class MEXCClient:
         - return the trigger order list from the API.
         """
         endpoint = f'api/v1/private/planorder/list/orders'
-        data = return_data({ 'symbol': symbol, 'start_time': start_time, 'end_time': end_time, 'page_num': page_num, 'page_size': page_size })
+        data = return_data({ 'symbol': symbol, 'states': states, 'start_time': start_time, 'end_time': end_time, 'page_num': page_num, 'page_size': page_size })
         return await self.make_request(endpoint, data, 'GET')
     
     # Method to get the Stop-Limit order list
@@ -609,7 +670,7 @@ class MEXCClient:
         - return the Stop-Limit order list from the API.
         """
         endpoint = f'api/v1/private/stoporder/list/orders'
-        data = return_data({ 'symbol': symbol, 'start_time': start_time, 'end_time': end_time, 'page_num': page_num, 'page_size': page_size })
+        data = return_data({ 'symbol': symbol, 'is_finished': is_finished, 'start_time': start_time, 'end_time': end_time, 'page_num': page_num, 'page_size': page_size })
         return await self.make_request(endpoint, data, 'GET')
     
     # Method to get risk limits
@@ -694,7 +755,7 @@ class MEXCClient:
         data = return_data({ 'position_mode': position_mode })
         return await self.make_request(endpoint, data, 'POST')
     
-    # Methot to create order (Under maintenance)
+    # Method to create order (Under maintenance)
     async def create_order(
         self,
         symbol: str,
@@ -728,10 +789,7 @@ class MEXCClient:
         - reduce_only: Whether to reduce only.
         - return the result from the API.
         """
-        # endpoint = f'api/v1/order/submit'
         endpoint = f'api/v1/private/order/submit'
-
-        # endpoint = f'api/v1/private/order/create'
         data = return_data({ 'symbol': symbol, 'price': price, 'vol': vol, 'leverage': leverage, 'side': side, 'type': order_type, 'openType': open_type, 'positionId': position_id, 'externalOid': external_oid, 'stopLossPrice': stop_loss_price, 'takeProfitPrice': take_profit_price, 'positionMode': position_mode, 'reduceOnly': False, 'postOnly': False })
         return await self.make_request(endpoint, data, 'POST')
     
@@ -847,7 +905,7 @@ class MEXCClient:
         - return the result from the API.
         """
         endpoint = f'api/v1/private/planorder/place'
-        data = ({ 'symbol': symbol, 'price': price, 'leverage': leverage, 'vol': vol, 'side': side, 'openType': open_type, 'triggerPrice': trigger_price, 'triggerType': trigger_type, 'executeCycle': execute_cycle, 'orderType': order_type, 'trend': trend })
+        data = return_data({ 'symbol': symbol, 'price': price, 'leverage': leverage, 'vol': vol, 'side': side, 'openType': open_type, 'triggerPrice': trigger_price, 'triggerType': trigger_type, 'executeCycle': execute_cycle, 'orderType': order_type, 'trend': trend })
         return await self.make_request(endpoint, data, 'POST')
     
     # Method to cancel the trigger order (Under maintenance)
