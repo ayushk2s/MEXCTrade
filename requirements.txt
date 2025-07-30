@@ -1,24 +1,24 @@
 # Core FastAPI dependencies
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic==2.11.7
 
 # HTTP client optimizations
-httpx==0.25.2
-aiofiles==23.2.1
+httpx==0.28.1
+aiofiles==24.1.0
 
 # JSON performance optimization (fallback to ujson for Windows compatibility)
-ujson==5.8.0
+ujson==5.10.0
 
 # Caching layer
-redis==5.0.1
+redis==6.2.0
 aioredis==2.0.1
 
 # Crypto dependencies
-pycryptodome==3.19.0
+pycryptodome==3.23.0
 
 # Performance monitoring
-prometheus-client==0.19.0
+prometheus-client==0.22.1
 
 # Compression
 brotli==1.1.0

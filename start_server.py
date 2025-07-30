@@ -76,21 +76,7 @@ def setup_logging():
 
 def print_banner():
     """Print startup banner with performance info"""
-    banner = """
-╔══════════════════════════════════════════════════════════════╗
-║                    MEXC Trading API v2.0                    ║
-║                     🚀 OPTIMIZED VERSION                     ║
-╠══════════════════════════════════════════════════════════════╣
-║  Performance Improvements:                                   ║
-║  • 70-90% faster response times                            ║
-║  • Async HTTP client with connection pooling               ║
-║  • Redis caching for frequently accessed data              ║
-║  • JSON optimization with orjson                           ║
-║  • GZip compression for reduced bandwidth                  ║
-║  • Real-time performance monitoring                        ║
-╚══════════════════════════════════════════════════════════════╝
-"""
-    print(banner)
+    pass
 
 def main():
     """Main startup function"""
